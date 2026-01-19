@@ -179,7 +179,10 @@ export async function getValidAccessToken(userId: string): Promise<string | null
 }
 
 // Create "Reset Day" calendar
-export async function createResetDayCalendar(accessToken: string): Promise<string> {
+export async function createResetDayCalendar(
+  accessToken: string,
+  timezone: string
+): Promise<string> {
   // First check if calendar already exists
   const listResponse = await fetch(
     "https://www.googleapis.com/calendar/v3/users/me/calendarList",
@@ -196,7 +199,7 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
     }
   }
 
-  // Create new calendar (timezone will be set when creating events)
+  // Create new calendar with user's timezone
   const response = await fetch("https://www.googleapis.com/calendar/v3/calendars", {
     method: "POST",
     headers: {
@@ -206,6 +209,7 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
     body: JSON.stringify({
       summary: "Reset Day",
       description: "Your daily rituals and productivity tracking",
+      timeZone: timezone,
     }),
   });
 
@@ -216,6 +220,23 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
 
   const data = await response.json();
   return data.id;
+}
+
+/**
+ * Get today's date in the specified timezone as YYYY-MM-DD
+ * This avoids the UTC conversion issue with toISOString()
+ */
+function getTodayInTimezone(timezone: string): string {
+  const now = new Date();
+  // Use Intl.DateTimeFormat to get date parts in the specified timezone
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  // en-CA locale gives YYYY-MM-DD format
+  return formatter.format(now);
 }
 
 // Create or update a recurring event
@@ -238,18 +259,19 @@ export async function createOrUpdateEvent(
   const { summary, description, startTime, duration, recurrence, reminderMinutes } =
     eventConfig;
 
-  // Calculate start and end times for today in the user's timezone
+  // Get today's date in the user's timezone (NOT UTC)
+  const dateStr = getTodayInTimezone(timezone);
+
+  // Parse start time
   const [hours, minutes] = startTime.split(":").map(Number);
 
-  // Create date string in user's timezone
-  const now = new Date();
-  const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
-
-  // Format: YYYY-MM-DDTHH:MM:SS (without Z, with timezone specified separately)
+  // Format: YYYY-MM-DDTHH:MM:SS (NO Z suffix - timezone is specified separately)
   const startDateTime = `${dateStr}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
 
-  const endHours = hours + Math.floor((minutes + duration) / 60);
-  const endMinutes = (minutes + duration) % 60;
+  // Calculate end time
+  const totalMinutes = hours * 60 + minutes + duration;
+  const endHours = Math.floor(totalMinutes / 60) % 24;
+  const endMinutes = totalMinutes % 60;
   const endDateTime = `${dateStr}T${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}:00`;
 
   const eventBody = {
@@ -329,13 +351,29 @@ function getColorForEventType(eventType: EventType): string {
   }
 }
 
+/**
+ * Generate all 30-min tracker time slots from 8:00 AM to 9:30 PM
+ * Returns array of "HH:MM" strings
+ */
+function getTrackerTimeSlots(): string[] {
+  const slots: string[] = [];
+  // From 8:00 (8*60=480) to 21:30 (21*60+30=1290), every 30 minutes
+  // That's 8:00, 8:30, 9:00, ... 21:00, 21:30 = 28 slots
+  for (let totalMinutes = 8 * 60; totalMinutes <= 21 * 60 + 30; totalMinutes += 30) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    slots.push(`${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`);
+  }
+  return slots;
+}
+
 // Sync all Reset Day events to Google Calendar
 export async function syncAllEvents(
   userId: string,
   accessToken: string,
   calendarId: string,
   baseUrl: string,
-  timezone: string = "America/New_York"
+  timezone: string = "Asia/Kolkata"
 ): Promise<void> {
   const supabase = await createClient();
 
@@ -349,6 +387,9 @@ export async function syncAllEvents(
   const getExistingEventId = (type: string) =>
     mappings.find((m) => m.event_type === type)?.google_event_id ?? null;
 
+  // Track all event mappings to save
+  const eventMappingsToSave: { event_type: string; google_event_id: string }[] = [];
+
   // 1. Morning Ritual - Daily at 8:00 AM
   const morningEventId = await createOrUpdateEvent(
     accessToken,
@@ -356,7 +397,7 @@ export async function syncAllEvents(
     EVENT_TYPES.MORNING,
     getExistingEventId(EVENT_TYPES.MORNING),
     {
-      summary: "Morning Ritual",
+      summary: "🌅 Morning Ritual",
       description:
         "Review your identity, anti-vision, and vision. Pick today's quests.",
       startTime: "08:00",
@@ -367,6 +408,10 @@ export async function syncAllEvents(
     `${baseUrl}/morning`,
     timezone
   );
+  eventMappingsToSave.push({
+    event_type: EVENT_TYPES.MORNING,
+    google_event_id: morningEventId,
+  });
 
   // 2. Night Reflection - Daily at 9:00 PM
   const nightEventId = await createOrUpdateEvent(
@@ -375,7 +420,7 @@ export async function syncAllEvents(
     EVENT_TYPES.NIGHT,
     getExistingEventId(EVENT_TYPES.NIGHT),
     {
-      summary: "Night Reflection",
+      summary: "🌙 Night Reflection",
       description: "Reflect on your day, journal, and plan tomorrow's quests.",
       startTime: "21:00",
       duration: 20,
@@ -385,6 +430,10 @@ export async function syncAllEvents(
     `${baseUrl}/night`,
     timezone
   );
+  eventMappingsToSave.push({
+    event_type: EVENT_TYPES.NIGHT,
+    google_event_id: nightEventId,
+  });
 
   // 3. Weekly Reset - Sundays at 6:00 PM
   const weeklyEventId = await createOrUpdateEvent(
@@ -393,7 +442,7 @@ export async function syncAllEvents(
     EVENT_TYPES.WEEKLY,
     getExistingEventId(EVENT_TYPES.WEEKLY),
     {
-      summary: "Weekly Reset",
+      summary: "📅 Weekly Reset",
       description:
         "Deep reflection: review your anti-vision, vision, and set weekly goals.",
       startTime: "18:00",
@@ -404,35 +453,83 @@ export async function syncAllEvents(
     `${baseUrl}/weekly`,
     timezone
   );
+  eventMappingsToSave.push({
+    event_type: EVENT_TYPES.WEEKLY,
+    google_event_id: weeklyEventId,
+  });
 
-  // 4. Time Tracker Reminder - Single daily reminder at 9:00 AM
-  const trackerEventId = await createOrUpdateEvent(
-    accessToken,
-    calendarId,
-    EVENT_TYPES.TRACKER,
-    getExistingEventId(EVENT_TYPES.TRACKER),
-    {
-      summary: "Check Time Tracker",
-      description:
-        "Remember to log your 30-min time blocks throughout the day.",
-      startTime: "09:00",
-      duration: 5,
-      recurrence: ["RRULE:FREQ=DAILY"],
-      reminderMinutes: 0,
-    },
-    `${baseUrl}/tracker`,
-    timezone
-  );
+  // 4. 30-min Tracker Reminders - Every 30 min from 8:00 AM to 9:30 PM
+  // Google Calendar doesn't support BYHOUR/BYMINUTE for multiple daily events
+  // So we create 28 separate daily recurring events
+  const trackerSlots = getTrackerTimeSlots();
 
-  // Save/update event mappings
-  const eventMappings = [
-    { event_type: EVENT_TYPES.MORNING, google_event_id: morningEventId },
-    { event_type: EVENT_TYPES.NIGHT, google_event_id: nightEventId },
-    { event_type: EVENT_TYPES.WEEKLY, google_event_id: weeklyEventId },
-    { event_type: EVENT_TYPES.TRACKER, google_event_id: trackerEventId },
-  ];
+  // First, delete any old tracker events that might exist with wrong format
+  const oldTrackerMapping = mappings.find((m) => m.event_type === EVENT_TYPES.TRACKER);
+  if (oldTrackerMapping) {
+    try {
+      await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${oldTrackerMapping.google_event_id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+    } catch {
+      // Ignore if already deleted
+    }
+  }
 
-  for (const mapping of eventMappings) {
+  // Delete old individual tracker slot events
+  for (let i = 0; i < 30; i++) {
+    const oldSlotMapping = mappings.find(
+      (m) => m.event_type === `${EVENT_TYPES.TRACKER}_${i}`
+    );
+    if (oldSlotMapping) {
+      try {
+        await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${oldSlotMapping.google_event_id}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+      } catch {
+        // Ignore if already deleted
+      }
+    }
+  }
+
+  // Create new tracker events for each 30-min slot
+  for (let i = 0; i < trackerSlots.length; i++) {
+    const slot = trackerSlots[i];
+    const slotEventType = `${EVENT_TYPES.TRACKER}_${i}`;
+    const existingSlotEventId = getExistingEventId(slotEventType);
+
+    const trackerEventId = await createOrUpdateEvent(
+      accessToken,
+      calendarId,
+      EVENT_TYPES.TRACKER,
+      existingSlotEventId,
+      {
+        summary: "⏱️ Log Time Block",
+        description: `Track what you worked on. Open the 30-min tracker to log your progress.`,
+        startTime: slot,
+        duration: 5,
+        recurrence: ["RRULE:FREQ=DAILY"],
+        reminderMinutes: 0,
+      },
+      `${baseUrl}/tracker`,
+      timezone
+    );
+
+    eventMappingsToSave.push({
+      event_type: slotEventType,
+      google_event_id: trackerEventId,
+    });
+  }
+
+  // Save all event mappings
+  for (const mapping of eventMappingsToSave) {
     await (supabase as any)
       .from("calendar_event_map")
       .upsert(
