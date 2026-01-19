@@ -406,9 +406,6 @@ export async function syncAllEvents(
   );
 
   // 4. Time Tracker Reminder - Single daily reminder at 9:00 AM
-  // NOTE: Google Calendar does not support BYHOUR/BYMINUTE with FREQ=DAILY for multiple events per day.
-  // For 30-min reminders, users should rely on browser push notifications instead.
-  // This creates one daily reminder to check the tracker.
   const trackerEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -417,7 +414,7 @@ export async function syncAllEvents(
     {
       summary: "Check Time Tracker",
       description:
-        "Remember to log your 30-min time blocks throughout the day. Open the tracker to stay on top of your productivity.",
+        "Remember to log your 30-min time blocks throughout the day.",
       startTime: "09:00",
       duration: 5,
       recurrence: ["RRULE:FREQ=DAILY"],
@@ -505,10 +502,9 @@ export async function revokeGoogleAccess(userId: string): Promise<void> {
   if (tokenData) {
     // Try to revoke token at Google
     try {
-      await fetch(
-        `https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`,
-        { method: "POST" }
-      );
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`, {
+        method: "POST",
+      });
     } catch (error) {
       console.error("Failed to revoke token at Google:", error);
     }
