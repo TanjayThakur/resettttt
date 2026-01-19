@@ -4,7 +4,16 @@ import { createClient } from "@/lib/supabase/server";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/google-calendar/callback";
+
+/**
+ * Redirect URI
+ * - In production (Vercel) uses NEXT_PUBLIC_APP_URL
+ * - In local dev uses localhost
+ */
+const GOOGLE_REDIRECT_URI =
+  process.env.NEXT_PUBLIC_APP_URL
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/api/google-calendar/callback`
+    : "http://localhost:3000/api/google-calendar/callback";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar",
@@ -19,7 +28,7 @@ export const EVENT_TYPES = {
   TRACKER: "tracker_30min",
 } as const;
 
-export type EventType = typeof EVENT_TYPES[keyof typeof EVENT_TYPES];
+export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
 
 // Row types for Supabase queries
 type GoogleCalendarTokenRow = {
@@ -146,7 +155,9 @@ export async function getValidAccessToken(userId: string): Promise<string | null
   // If token expires in less than 5 minutes, refresh it
   if (expiry.getTime() - now.getTime() < 5 * 60 * 1000) {
     try {
-      const { access_token, expiry: newExpiry } = await refreshAccessToken(tokenData.refresh_token);
+      const { access_token, expiry: newExpiry } = await refreshAccessToken(
+        tokenData.refresh_token
+      );
 
       await (supabase as any)
         .from("google_calendar_tokens")
@@ -185,22 +196,18 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
     }
   }
 
-  // Create new calendar
-  const response = await fetch(
-    "https://www.googleapis.com/calendar/v3/calendars",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        summary: "Reset Day",
-        description: "Your daily rituals and productivity tracking",
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
-    }
-  );
+  // Create new calendar (timezone will be set when creating events)
+  const response = await fetch("https://www.googleapis.com/calendar/v3/calendars", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      summary: "Reset Day",
+      description: "Your daily rituals and productivity tracking",
+    }),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -225,36 +232,43 @@ export async function createOrUpdateEvent(
     recurrence: string[]; // RRULE strings
     reminderMinutes: number;
   },
-  baseUrl: string
+  baseUrl: string,
+  timezone: string
 ): Promise<string> {
-  const { summary, description, startTime, duration, recurrence, reminderMinutes } = eventConfig;
+  const { summary, description, startTime, duration, recurrence, reminderMinutes } =
+    eventConfig;
 
-  // Calculate start and end times for today
-  const now = new Date();
+  // Calculate start and end times for today in the user's timezone
   const [hours, minutes] = startTime.split(":").map(Number);
-  const startDate = new Date(now);
-  startDate.setHours(hours, minutes, 0, 0);
 
-  const endDate = new Date(startDate);
-  endDate.setMinutes(endDate.getMinutes() + duration);
+  // Create date string in user's timezone
+  const now = new Date();
+  const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+
+  // Format: YYYY-MM-DDTHH:MM:SS (without Z, with timezone specified separately)
+  const startDateTime = `${dateStr}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
+
+  const endHours = hours + Math.floor((minutes + duration) / 60);
+  const endMinutes = (minutes + duration) % 60;
+  const endDateTime = `${dateStr}T${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}:00`;
 
   const eventBody = {
     summary,
     description: `${description}\n\nOpen app: ${baseUrl}`,
     start: {
-      dateTime: startDate.toISOString(),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      dateTime: startDateTime,
+      timeZone: timezone,
     },
     end: {
-      dateTime: endDate.toISOString(),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      dateTime: endDateTime,
+      timeZone: timezone,
     },
     recurrence,
     reminders: {
       useDefault: false,
       overrides: [
         { method: "popup", minutes: reminderMinutes },
-        { method: "popup", minutes: 0 },
+        ...(reminderMinutes > 0 ? [{ method: "popup", minutes: 0 }] : []),
       ],
     },
     colorId: getColorForEventType(eventType),
@@ -320,7 +334,8 @@ export async function syncAllEvents(
   userId: string,
   accessToken: string,
   calendarId: string,
-  baseUrl: string
+  baseUrl: string,
+  timezone: string = "America/New_York"
 ): Promise<void> {
   const supabase = await createClient();
 
@@ -342,13 +357,15 @@ export async function syncAllEvents(
     getExistingEventId(EVENT_TYPES.MORNING),
     {
       summary: "Morning Ritual",
-      description: "Review your identity, anti-vision, and vision. Pick today's quests.",
+      description:
+        "Review your identity, anti-vision, and vision. Pick today's quests.",
       startTime: "08:00",
       duration: 15,
       recurrence: ["RRULE:FREQ=DAILY"],
       reminderMinutes: 5,
     },
-    `${baseUrl}/morning`
+    `${baseUrl}/morning`,
+    timezone
   );
 
   // 2. Night Reflection - Daily at 9:00 PM
@@ -365,7 +382,8 @@ export async function syncAllEvents(
       recurrence: ["RRULE:FREQ=DAILY"],
       reminderMinutes: 5,
     },
-    `${baseUrl}/night`
+    `${baseUrl}/night`,
+    timezone
   );
 
   // 3. Weekly Reset - Sundays at 6:00 PM
@@ -376,32 +394,37 @@ export async function syncAllEvents(
     getExistingEventId(EVENT_TYPES.WEEKLY),
     {
       summary: "Weekly Reset",
-      description: "Deep reflection: review your anti-vision, vision, and set weekly goals.",
+      description:
+        "Deep reflection: review your anti-vision, vision, and set weekly goals.",
       startTime: "18:00",
       duration: 30,
       recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=SU"],
       reminderMinutes: 15,
     },
-    `${baseUrl}/weekly`
+    `${baseUrl}/weekly`,
+    timezone
   );
 
-  // 4. 30-min Tracker reminders - Every 30 min from 8:00 AM to 10:00 PM
+  // 4. Time Tracker Reminder - Single daily reminder at 9:00 AM
+  // NOTE: Google Calendar does not support BYHOUR/BYMINUTE with FREQ=DAILY for multiple events per day.
+  // For 30-min reminders, users should rely on browser push notifications instead.
+  // This creates one daily reminder to check the tracker.
   const trackerEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
     EVENT_TYPES.TRACKER,
     getExistingEventId(EVENT_TYPES.TRACKER),
     {
-      summary: "Log Time Block",
-      description: "Track what you're working on in your 30-min tracker.",
-      startTime: "08:00",
+      summary: "Check Time Tracker",
+      description:
+        "Remember to log your 30-min time blocks throughout the day. Open the tracker to stay on top of your productivity.",
+      startTime: "09:00",
       duration: 5,
-      recurrence: [
-        "RRULE:FREQ=DAILY;BYHOUR=8,9,10,11,12,13,14,15,16,17,18,19,20,21;BYMINUTE=0,30",
-      ],
+      recurrence: ["RRULE:FREQ=DAILY"],
       reminderMinutes: 0,
     },
-    `${baseUrl}/tracker`
+    `${baseUrl}/tracker`,
+    timezone
   );
 
   // Save/update event mappings
@@ -465,10 +488,7 @@ export async function deleteAllEvents(
   }
 
   // Delete mappings from database
-  await supabase
-    .from("calendar_event_map")
-    .delete()
-    .eq("user_id", userId);
+  await (supabase as any).from("calendar_event_map").delete().eq("user_id", userId);
 }
 
 // Revoke Google access and clean up
@@ -494,14 +514,10 @@ export async function revokeGoogleAccess(userId: string): Promise<void> {
     }
 
     // Delete from database
-    await supabase
+    await (supabase as any)
       .from("google_calendar_tokens")
       .delete()
       .eq("user_id", userId);
-
-    await supabase
-      .from("calendar_event_map")
-      .delete()
-      .eq("user_id", userId);
+    await (supabase as any).from("calendar_event_map").delete().eq("user_id", userId);
   }
 }
