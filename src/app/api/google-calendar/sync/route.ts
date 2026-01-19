@@ -43,20 +43,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user's timezone from reminder settings
-    const { data: settings } = await supabase
-      .from("reminder_settings")
-      .select("timezone")
-      .eq("user_id", user.id)
-      .maybeSingle<{ timezone: string | null }>();
-
-    const userTimezone = settings?.timezone || "America/New_York";
-
     // Get base URL from request
     const baseUrl = new URL(request.url).origin;
 
-    // ✅ Sync all events with user's timezone
-    await syncAllEvents(user.id, accessToken, calendarId, baseUrl, userTimezone);
+    // Sync all events - timezone is HARDCODED to Asia/Kolkata in google-calendar.ts
+    await syncAllEvents(user.id, accessToken, calendarId, baseUrl);
 
     return NextResponse.json({
       success: true,

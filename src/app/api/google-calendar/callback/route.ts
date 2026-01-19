@@ -49,18 +49,8 @@ export async function GET(request: NextRequest) {
     // Get user's Google email
     const email = await getGoogleUserEmail(tokens.access_token);
 
-    // Get user's timezone from their reminder settings, or use default
-    // Must get this BEFORE creating calendar so we can set the calendar's timezone
-    const { data: settings } = await supabase
-      .from("reminder_settings")
-      .select("timezone")
-      .eq("user_id", user.id)
-      .maybeSingle<{ timezone: string | null }>();
-
-    const userTimezone = settings?.timezone || "Asia/Kolkata";
-
-    // Create Reset Day calendar with user's timezone
-    const calendarId = await createResetDayCalendar(tokens.access_token, userTimezone);
+    // Create Reset Day calendar - timezone is HARDCODED to Asia/Kolkata
+    const calendarId = await createResetDayCalendar(tokens.access_token);
 
     // Save tokens to database
     await (supabase as any)
@@ -82,8 +72,8 @@ export async function GET(request: NextRequest) {
     // Get base URL for deep links
     const baseUrl = new URL(request.url).origin;
 
-    // Sync all events immediately after connection
-    await syncAllEvents(user.id, tokens.access_token, calendarId, baseUrl, userTimezone);
+    // Sync all events immediately - timezone is HARDCODED to Asia/Kolkata
+    await syncAllEvents(user.id, tokens.access_token, calendarId, baseUrl);
 
     return NextResponse.redirect(
       new URL("/settings?google=connected", request.url)

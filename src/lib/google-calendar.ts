@@ -20,6 +20,10 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
+// HARDCODED India timezone - all events will be in IST (GMT+5:30)
+// This ensures consistent timing regardless of server location (Vercel UTC)
+const INDIA_TIMEZONE = "Asia/Kolkata";
+
 // Event types for tracking
 export const EVENT_TYPES = {
   MORNING: "morning_ritual",
@@ -178,11 +182,8 @@ export async function getValidAccessToken(userId: string): Promise<string | null
   return tokenData.access_token;
 }
 
-// Create "Reset Day" calendar
-export async function createResetDayCalendar(
-  accessToken: string,
-  timezone: string
-): Promise<string> {
+// Create "Reset Day" calendar - ALWAYS uses India timezone
+export async function createResetDayCalendar(accessToken: string): Promise<string> {
   // First check if calendar already exists
   const listResponse = await fetch(
     "https://www.googleapis.com/calendar/v3/users/me/calendarList",
@@ -199,7 +200,7 @@ export async function createResetDayCalendar(
     }
   }
 
-  // Create new calendar with user's timezone
+  // Create new calendar with HARDCODED India timezone
   const response = await fetch("https://www.googleapis.com/calendar/v3/calendars", {
     method: "POST",
     headers: {
@@ -209,7 +210,7 @@ export async function createResetDayCalendar(
     body: JSON.stringify({
       summary: "Reset Day",
       description: "Your daily rituals and productivity tracking",
-      timeZone: timezone,
+      timeZone: INDIA_TIMEZONE,
     }),
   });
 
@@ -223,14 +224,14 @@ export async function createResetDayCalendar(
 }
 
 /**
- * Get today's date in the specified timezone as YYYY-MM-DD
- * This avoids the UTC conversion issue with toISOString()
+ * Get today's date in India timezone as YYYY-MM-DD
+ * Uses INDIA_TIMEZONE constant to ensure correct date regardless of server location
  */
-function getTodayInTimezone(timezone: string): string {
+function getTodayInIST(): string {
   const now = new Date();
-  // Use Intl.DateTimeFormat to get date parts in the specified timezone
+  // Use Intl.DateTimeFormat to get date parts in India timezone
   const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
+    timeZone: INDIA_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -239,7 +240,7 @@ function getTodayInTimezone(timezone: string): string {
   return formatter.format(now);
 }
 
-// Create or update a recurring event
+// Create or update a recurring event - ALWAYS uses India timezone
 export async function createOrUpdateEvent(
   accessToken: string,
   calendarId: string,
@@ -248,24 +249,24 @@ export async function createOrUpdateEvent(
   eventConfig: {
     summary: string;
     description: string;
-    startTime: string; // HH:MM format
+    startTime: string; // HH:MM format in IST
     duration: number; // minutes
     recurrence: string[]; // RRULE strings
     reminderMinutes: number;
   },
-  baseUrl: string,
-  timezone: string
+  baseUrl: string
 ): Promise<string> {
   const { summary, description, startTime, duration, recurrence, reminderMinutes } =
     eventConfig;
 
-  // Get today's date in the user's timezone (NOT UTC)
-  const dateStr = getTodayInTimezone(timezone);
+  // Get today's date in India timezone (NOT UTC)
+  const dateStr = getTodayInIST();
 
-  // Parse start time
+  // Parse start time (already in IST)
   const [hours, minutes] = startTime.split(":").map(Number);
 
-  // Format: YYYY-MM-DDTHH:MM:SS (NO Z suffix - timezone is specified separately)
+  // Format: YYYY-MM-DDTHH:MM:SS (NO Z suffix - timezone specified separately)
+  // This is the LOCAL time in India, NOT UTC
   const startDateTime = `${dateStr}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
 
   // Calculate end time
@@ -279,11 +280,11 @@ export async function createOrUpdateEvent(
     description: `${description}\n\nOpen app: ${baseUrl}`,
     start: {
       dateTime: startDateTime,
-      timeZone: timezone,
+      timeZone: INDIA_TIMEZONE, // HARDCODED: Asia/Kolkata
     },
     end: {
       dateTime: endDateTime,
-      timeZone: timezone,
+      timeZone: INDIA_TIMEZONE, // HARDCODED: Asia/Kolkata
     },
     recurrence,
     reminders: {
@@ -352,14 +353,14 @@ function getColorForEventType(eventType: EventType): string {
 }
 
 /**
- * Generate all 30-min tracker time slots from 8:00 AM to 9:30 PM
+ * Generate all 30-min tracker time slots from 8:00 AM to 10:00 PM IST
  * Returns array of "HH:MM" strings
  */
 function getTrackerTimeSlots(): string[] {
   const slots: string[] = [];
-  // From 8:00 (8*60=480) to 21:30 (21*60+30=1290), every 30 minutes
-  // That's 8:00, 8:30, 9:00, ... 21:00, 21:30 = 28 slots
-  for (let totalMinutes = 8 * 60; totalMinutes <= 21 * 60 + 30; totalMinutes += 30) {
+  // From 8:00 (8*60=480) to 22:00 (22*60=1320), every 30 minutes
+  // That's 8:00, 8:30, 9:00, ... 21:30, 22:00 = 29 slots
+  for (let totalMinutes = 8 * 60; totalMinutes <= 22 * 60; totalMinutes += 30) {
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     slots.push(`${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`);
@@ -367,13 +368,12 @@ function getTrackerTimeSlots(): string[] {
   return slots;
 }
 
-// Sync all Reset Day events to Google Calendar
+// Sync all Reset Day events to Google Calendar - ALWAYS uses India timezone
 export async function syncAllEvents(
   userId: string,
   accessToken: string,
   calendarId: string,
-  baseUrl: string,
-  timezone: string = "Asia/Kolkata"
+  baseUrl: string
 ): Promise<void> {
   const supabase = await createClient();
 
@@ -390,7 +390,7 @@ export async function syncAllEvents(
   // Track all event mappings to save
   const eventMappingsToSave: { event_type: string; google_event_id: string }[] = [];
 
-  // 1. Morning Ritual - Daily at 8:00 AM
+  // 1. Morning Ritual - Daily at 8:00 AM IST
   const morningEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -400,20 +400,19 @@ export async function syncAllEvents(
       summary: "🌅 Morning Ritual",
       description:
         "Review your identity, anti-vision, and vision. Pick today's quests.",
-      startTime: "08:00",
+      startTime: "08:00", // 8:00 AM IST
       duration: 15,
       recurrence: ["RRULE:FREQ=DAILY"],
       reminderMinutes: 5,
     },
-    `${baseUrl}/morning`,
-    timezone
+    `${baseUrl}/morning`
   );
   eventMappingsToSave.push({
     event_type: EVENT_TYPES.MORNING,
     google_event_id: morningEventId,
   });
 
-  // 2. Night Reflection - Daily at 9:00 PM
+  // 2. Night Reflection - Daily at 9:00 PM IST
   const nightEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -422,20 +421,19 @@ export async function syncAllEvents(
     {
       summary: "🌙 Night Reflection",
       description: "Reflect on your day, journal, and plan tomorrow's quests.",
-      startTime: "21:00",
+      startTime: "21:00", // 9:00 PM IST
       duration: 20,
       recurrence: ["RRULE:FREQ=DAILY"],
       reminderMinutes: 5,
     },
-    `${baseUrl}/night`,
-    timezone
+    `${baseUrl}/night`
   );
   eventMappingsToSave.push({
     event_type: EVENT_TYPES.NIGHT,
     google_event_id: nightEventId,
   });
 
-  // 3. Weekly Reset - Sundays at 6:00 PM
+  // 3. Weekly Reset - Sundays at 6:00 PM IST
   const weeklyEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -445,22 +443,21 @@ export async function syncAllEvents(
       summary: "📅 Weekly Reset",
       description:
         "Deep reflection: review your anti-vision, vision, and set weekly goals.",
-      startTime: "18:00",
+      startTime: "18:00", // 6:00 PM IST
       duration: 30,
       recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=SU"],
       reminderMinutes: 15,
     },
-    `${baseUrl}/weekly`,
-    timezone
+    `${baseUrl}/weekly`
   );
   eventMappingsToSave.push({
     event_type: EVENT_TYPES.WEEKLY,
     google_event_id: weeklyEventId,
   });
 
-  // 4. 30-min Tracker Reminders - Every 30 min from 8:00 AM to 9:30 PM
+  // 4. 30-min Tracker Reminders - Every 30 min from 8:00 AM to 10:00 PM IST
   // Google Calendar doesn't support BYHOUR/BYMINUTE for multiple daily events
-  // So we create 28 separate daily recurring events
+  // So we create separate daily recurring events for each 30-min slot
   const trackerSlots = getTrackerTimeSlots();
 
   // First, delete any old tracker events that might exist with wrong format
@@ -479,7 +476,7 @@ export async function syncAllEvents(
     }
   }
 
-  // Delete old individual tracker slot events
+  // Delete old individual tracker slot events (clean up any stale mappings)
   for (let i = 0; i < 30; i++) {
     const oldSlotMapping = mappings.find(
       (m) => m.event_type === `${EVENT_TYPES.TRACKER}_${i}`
@@ -499,7 +496,7 @@ export async function syncAllEvents(
     }
   }
 
-  // Create new tracker events for each 30-min slot
+  // Create new tracker events for each 30-min slot (all times in IST)
   for (let i = 0; i < trackerSlots.length; i++) {
     const slot = trackerSlots[i];
     const slotEventType = `${EVENT_TYPES.TRACKER}_${i}`;
@@ -513,13 +510,12 @@ export async function syncAllEvents(
       {
         summary: "⏱️ Log Time Block",
         description: `Track what you worked on. Open the 30-min tracker to log your progress.`,
-        startTime: slot,
+        startTime: slot, // Time in IST (e.g., "08:00", "08:30", etc.)
         duration: 5,
         recurrence: ["RRULE:FREQ=DAILY"],
         reminderMinutes: 0,
       },
-      `${baseUrl}/tracker`,
-      timezone
+      `${baseUrl}/tracker`
     );
 
     eventMappingsToSave.push({
