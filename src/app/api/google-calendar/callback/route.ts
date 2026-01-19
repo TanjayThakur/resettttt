@@ -4,6 +4,7 @@ import {
   exchangeCodeForTokens,
   getGoogleUserEmail,
   createResetDayCalendar,
+  syncAllEvents,
 } from "@/lib/google-calendar";
 
 export async function GET(request: NextRequest) {
@@ -67,6 +68,21 @@ export async function GET(request: NextRequest) {
         },
         { onConflict: "user_id" }
       );
+
+    // Get user's timezone from their reminder settings, or use default
+    const { data: settings } = await supabase
+      .from("reminder_settings")
+      .select("timezone")
+      .eq("user_id", user.id)
+      .maybeSingle<{ timezone: string | null }>();
+
+    const userTimezone = settings?.timezone || "America/New_York";
+
+    // Get base URL for deep links
+    const baseUrl = new URL(request.url).origin;
+
+    // Sync all events immediately after connection
+    await syncAllEvents(user.id, tokens.access_token, calendarId, baseUrl, userTimezone);
 
     return NextResponse.redirect(
       new URL("/settings?google=connected", request.url)
