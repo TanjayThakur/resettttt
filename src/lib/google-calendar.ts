@@ -4,7 +4,18 @@ import { createClient } from "@/lib/supabase/server";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/google-calendar/callback";
+
+/**
+ * Redirect URI FIX ✅
+ * - In production (Vercel) it will use NEXT_PUBLIC_APP_URL
+ * - In local dev it will use localhost
+ *
+ * This prevents Google OAuth redirect_uri_mismatch.
+ */
+const GOOGLE_REDIRECT_URI =
+  process.env.NEXT_PUBLIC_APP_URL
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/api/google-calendar/callback`
+    : "http://localhost:3000/api/google-calendar/callback";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar",
@@ -186,21 +197,18 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
   }
 
   // Create new calendar
-  const response = await fetch(
-    "https://www.googleapis.com/calendar/v3/calendars",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        summary: "Reset Day",
-        description: "Your daily rituals and productivity tracking",
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
-    }
-  );
+  const response = await fetch("https://www.googleapis.com/calendar/v3/calendars", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      summary: "Reset Day",
+      description: "Your daily rituals and productivity tracking",
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -465,10 +473,7 @@ export async function deleteAllEvents(
   }
 
   // Delete mappings from database
-  await supabase
-    .from("calendar_event_map")
-    .delete()
-    .eq("user_id", userId);
+  await supabase.from("calendar_event_map").delete().eq("user_id", userId);
 }
 
 // Revoke Google access and clean up
@@ -485,23 +490,15 @@ export async function revokeGoogleAccess(userId: string): Promise<void> {
   if (tokenData) {
     // Try to revoke token at Google
     try {
-      await fetch(
-        `https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`,
-        { method: "POST" }
-      );
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`, {
+        method: "POST",
+      });
     } catch (error) {
       console.error("Failed to revoke token at Google:", error);
     }
 
     // Delete from database
-    await supabase
-      .from("google_calendar_tokens")
-      .delete()
-      .eq("user_id", userId);
-
-    await supabase
-      .from("calendar_event_map")
-      .delete()
-      .eq("user_id", userId);
+    await supabase.from("google_calendar_tokens").delete().eq("user_id", userId);
+    await supabase.from("calendar_event_map").delete().eq("user_id", userId);
   }
 }
