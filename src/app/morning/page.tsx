@@ -123,7 +123,7 @@ export default function MorningPage() {
       .insert({
         user_id: user.id,
         entry_date: today,
-        reviewed_statements: true,
+        acknowledged: true,
         xp_awarded: xpEarned,
       } as Database["public"]["Tables"]["morning_entries"]["Insert"]);
 
