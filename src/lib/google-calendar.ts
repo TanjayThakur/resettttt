@@ -30,7 +30,18 @@ export const EVENT_TYPES = {
   NIGHT: "night_reflection",
   WEEKLY: "weekly_reset",
   TRACKER: "tracker_30min",
+  INTERRUPT: "interrupt",
 } as const;
+
+// Interrupt times in IST (matching INTERRUPT_TIMES in utils.ts)
+const INTERRUPT_SCHEDULE = [
+  { number: 1, time: "09:00", label: "9:00 AM" },
+  { number: 2, time: "11:00", label: "11:00 AM" },
+  { number: 3, time: "13:00", label: "1:00 PM" },
+  { number: 4, time: "15:00", label: "3:00 PM" },
+  { number: 5, time: "17:00", label: "5:00 PM" },
+  { number: 6, time: "19:00", label: "7:00 PM" },
+] as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
 
@@ -347,6 +358,8 @@ function getColorForEventType(eventType: EventType): string {
       return "3"; // Purple
     case EVENT_TYPES.TRACKER:
       return "10"; // Green
+    case EVENT_TYPES.INTERRUPT:
+      return "6"; // Orange - stands out for attention
     default:
       return "1";
   }
@@ -521,6 +534,33 @@ export async function syncAllEvents(
     eventMappingsToSave.push({
       event_type: slotEventType,
       google_event_id: trackerEventId,
+    });
+  }
+
+  // 5. Interrupt Reminders - 6 times daily at 9 AM, 11 AM, 1 PM, 3 PM, 5 PM, 7 PM IST
+  for (const interrupt of INTERRUPT_SCHEDULE) {
+    const interruptEventType = `${EVENT_TYPES.INTERRUPT}_${interrupt.number}`;
+    const existingInterruptEventId = getExistingEventId(interruptEventType);
+
+    const interruptEventId = await createOrUpdateEvent(
+      accessToken,
+      calendarId,
+      EVENT_TYPES.INTERRUPT,
+      existingInterruptEventId,
+      {
+        summary: `⚡ Interrupt #${interrupt.number}`,
+        description: `Time for your interrupt reflection! Take a moment to check in with yourself and log your progress. (${interrupt.label} IST)`,
+        startTime: interrupt.time, // Time in IST (e.g., "09:00", "11:00", etc.)
+        duration: 5,
+        recurrence: ["RRULE:FREQ=DAILY"],
+        reminderMinutes: 0, // Immediate notification
+      },
+      `${baseUrl}/interrupt`
+    );
+
+    eventMappingsToSave.push({
+      event_type: interruptEventType,
+      google_event_id: interruptEventId,
     });
   }
 

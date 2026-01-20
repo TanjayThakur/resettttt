@@ -251,11 +251,13 @@ function SettingsContent() {
 
     if (error) {
       toast.error(`Failed to save settings: ${error.message}`);
+      setIsSaving(false);
     } else {
       toast.success("Settings saved!");
+      setIsSaving(false);
+      // Redirect back to dashboard after successful save
+      router.push("/dashboard");
     }
-
-    setIsSaving(false);
   };
 
   if (isLoading) {
@@ -460,12 +462,13 @@ function SettingsContent() {
                 </div>
 
                 <div className="text-sm text-muted-foreground">
-                  <p className="font-medium mb-2">Events synced to your calendar:</p>
+                  <p className="font-medium mb-2">Events synced to your calendar (IST):</p>
                   <ul className="list-disc list-inside space-y-1">
-                    <li>Morning Ritual - Daily at 8:00 AM</li>
-                    <li>Night Reflection - Daily at 9:00 PM</li>
-                    <li>Weekly Reset - Sundays at 6:00 PM</li>
-                    <li>30-min Tracker - Every 30 min (8 AM - 10 PM)</li>
+                    <li>Morning Ritual - Daily at 8:00 AM IST</li>
+                    <li>Night Reflection - Daily at 9:00 PM IST</li>
+                    <li>Weekly Reset - Sundays at 6:00 PM IST</li>
+                    <li>Interrupts - 9 AM, 11 AM, 1 PM, 3 PM, 5 PM, 7 PM IST</li>
+                    <li>30-min Tracker - Every 30 min (8 AM - 10 PM IST)</li>
                   </ul>
                 </div>
 
@@ -491,12 +494,13 @@ function SettingsContent() {
                 <div className="text-sm text-muted-foreground">
                   <p>Connect Google Calendar to automatically create recurring events for:</p>
                   <ul className="list-disc list-inside mt-2 space-y-1">
-                    <li>Morning Ritual (8:00 AM daily)</li>
-                    <li>Night Reflection (9:00 PM daily)</li>
-                    <li>Weekly Reset (Sunday 6:00 PM)</li>
+                    <li>Morning Ritual (8:00 AM IST daily)</li>
+                    <li>Night Reflection (9:00 PM IST daily)</li>
+                    <li>Weekly Reset (Sunday 6:00 PM IST)</li>
+                    <li>Interrupt reminders (6x daily)</li>
                     <li>30-min Time Tracker reminders</li>
                   </ul>
-                  <p className="mt-2">Google Calendar will handle all notifications across your devices.</p>
+                  <p className="mt-2">All times are in India Standard Time (IST). Google Calendar will handle all notifications across your devices.</p>
                 </div>
 
                 <Button
