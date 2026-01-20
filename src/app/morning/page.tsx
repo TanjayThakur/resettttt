@@ -43,9 +43,9 @@ export default function SettingsPage() {
     }
 
     const { data: settings, error } = await supabase
-      .from("user_settings")
+      .from("reminder_settings")
       .select("id, morning_time, night_time, enabled, timezone")
-      .eq("id", user.id)
+      .eq("user_id", user.id)
       .maybeSingle<UserSettingsRow>();
 
     if (error) {
@@ -80,9 +80,9 @@ export default function SettingsPage() {
     }
 
     const { error } = await (supabase as any)
-      .from("user_settings")
+      .from("reminder_settings")
       .upsert({
-        id: user.id,
+        user_id: user.id,
         morning_time: morningTime,
         night_time: nightTime,
         enabled,
