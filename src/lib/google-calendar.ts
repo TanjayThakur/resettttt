@@ -1,15 +1,11 @@
 // Google Calendar integration utilities
+// ALL TIMES ARE HARDCODED TO INDIA STANDARD TIME (Asia/Kolkata, GMT+5:30)
 
 import { createClient } from "@/lib/supabase/server";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
 
-/**
- * Redirect URI
- * - In production (Vercel) uses NEXT_PUBLIC_APP_URL
- * - In local dev uses localhost
- */
 const GOOGLE_REDIRECT_URI =
   process.env.NEXT_PUBLIC_APP_URL
     ? `${process.env.NEXT_PUBLIC_APP_URL}/api/google-calendar/callback`
@@ -20,11 +16,12 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
-// HARDCODED India timezone - all events will be in IST (GMT+5:30)
-// This ensures consistent timing regardless of server location (Vercel UTC)
+// ============================================
+// HARDCODED INDIA TIMEZONE - NEVER CHANGE THIS
+// ============================================
 const INDIA_TIMEZONE = "Asia/Kolkata";
 
-// Event types for tracking
+// Event types for tracking in calendar_event_map
 export const EVENT_TYPES = {
   MORNING: "morning_ritual",
   NIGHT: "night_reflection",
@@ -33,17 +30,19 @@ export const EVENT_TYPES = {
   INTERRUPT: "interrupt",
 } as const;
 
-// Interrupt times in IST (matching INTERRUPT_TIMES in utils.ts)
-const INTERRUPT_SCHEDULE = [
-  { number: 1, time: "09:00", label: "9:00 AM" },
-  { number: 2, time: "11:00", label: "11:00 AM" },
-  { number: 3, time: "13:00", label: "1:00 PM" },
-  { number: 4, time: "15:00", label: "3:00 PM" },
-  { number: 5, time: "17:00", label: "5:00 PM" },
-  { number: 6, time: "19:00", label: "7:00 PM" },
-] as const;
-
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
+
+// ============================================
+// INTERRUPT SCHEDULE - 6 times daily in IST
+// ============================================
+const INTERRUPT_SCHEDULE = [
+  { number: 1, time: "09:00", label: "9:00 AM IST" },
+  { number: 2, time: "11:00", label: "11:00 AM IST" },
+  { number: 3, time: "13:00", label: "1:00 PM IST" },
+  { number: 4, time: "15:00", label: "3:00 PM IST" },
+  { number: 5, time: "17:00", label: "5:00 PM IST" },
+  { number: 6, time: "19:00", label: "7:00 PM IST" },
+] as const;
 
 // Row types for Supabase queries
 type GoogleCalendarTokenRow = {
@@ -58,7 +57,65 @@ type CalendarEventMapRow = {
   google_event_id: string;
 };
 
-// Generate OAuth URL
+// ============================================
+// DATE/TIME UTILITIES - ALL IN IST
+// ============================================
+
+/**
+ * Get current date in India timezone as YYYY-MM-DD
+ * This function explicitly formats the date without relying on locale
+ */
+function getDateInIST(date: Date = new Date()): string {
+  // Get the date parts in India timezone
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: INDIA_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  };
+
+  const parts = new Intl.DateTimeFormat("en-GB", options).formatToParts(date);
+  const year = parts.find(p => p.type === "year")?.value;
+  const month = parts.find(p => p.type === "month")?.value;
+  const day = parts.find(p => p.type === "day")?.value;
+
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Get tomorrow's date in India timezone
+ * Using tomorrow ensures recurring events start fresh
+ */
+function getTomorrowInIST(): string {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return getDateInIST(tomorrow);
+}
+
+/**
+ * Format a local datetime string for Google Calendar API
+ * Format: YYYY-MM-DDTHH:MM:SS (NO 'Z' suffix - timezone is specified separately)
+ */
+function formatLocalDateTime(dateStr: string, timeStr: string): string {
+  // timeStr is in HH:MM format
+  return `${dateStr}T${timeStr}:00`;
+}
+
+/**
+ * Calculate end time given start time and duration in minutes
+ */
+function calculateEndTime(startTime: string, durationMinutes: number): string {
+  const [hours, minutes] = startTime.split(":").map(Number);
+  const totalMinutes = hours * 60 + minutes + durationMinutes;
+  const endHours = Math.floor(totalMinutes / 60) % 24;
+  const endMinutes = totalMinutes % 60;
+  return `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`;
+}
+
+// ============================================
+// OAUTH FUNCTIONS
+// ============================================
+
 export function getGoogleOAuthUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
@@ -73,7 +130,6 @@ export function getGoogleOAuthUrl(state: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-// Exchange authorization code for tokens
 export async function exchangeCodeForTokens(code: string): Promise<{
   access_token: string;
   refresh_token: string;
@@ -108,7 +164,6 @@ export async function exchangeCodeForTokens(code: string): Promise<{
   };
 }
 
-// Refresh access token
 export async function refreshAccessToken(refreshToken: string): Promise<{
   access_token: string;
   expiry: Date;
@@ -138,7 +193,6 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   };
 }
 
-// Get user email from Google
 export async function getGoogleUserEmail(accessToken: string): Promise<string> {
   const response = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -152,7 +206,6 @@ export async function getGoogleUserEmail(accessToken: string): Promise<string> {
   return data.email;
 }
 
-// Get valid access token (refresh if needed)
 export async function getValidAccessToken(userId: string): Promise<string | null> {
   const supabase = await createClient();
 
@@ -193,7 +246,10 @@ export async function getValidAccessToken(userId: string): Promise<string | null
   return tokenData.access_token;
 }
 
-// Create "Reset Day" calendar - ALWAYS uses India timezone
+// ============================================
+// CALENDAR CREATION - HARDCODED IST TIMEZONE
+// ============================================
+
 export async function createResetDayCalendar(accessToken: string): Promise<string> {
   // First check if calendar already exists
   const listResponse = await fetch(
@@ -207,11 +263,27 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
       (cal: { summary: string }) => cal.summary === "Reset Day"
     );
     if (existingCalendar) {
+      // Update existing calendar to ensure correct timezone
+      await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(existingCalendar.id)}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            summary: "Reset Day",
+            description: "Your daily rituals and productivity tracking - India Standard Time",
+            timeZone: INDIA_TIMEZONE,
+          }),
+        }
+      );
       return existingCalendar.id;
     }
   }
 
-  // Create new calendar with HARDCODED India timezone
+  // Create new calendar with INDIA timezone
   const response = await fetch("https://www.googleapis.com/calendar/v3/calendars", {
     method: "POST",
     headers: {
@@ -220,7 +292,7 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
     },
     body: JSON.stringify({
       summary: "Reset Day",
-      description: "Your daily rituals and productivity tracking",
+      description: "Your daily rituals and productivity tracking - India Standard Time",
       timeZone: INDIA_TIMEZONE,
     }),
   });
@@ -234,112 +306,123 @@ export async function createResetDayCalendar(accessToken: string): Promise<strin
   return data.id;
 }
 
-/**
- * Get today's date in India timezone as YYYY-MM-DD
- * Uses INDIA_TIMEZONE constant to ensure correct date regardless of server location
- */
-function getTodayInIST(): string {
-  const now = new Date();
-  // Use Intl.DateTimeFormat to get date parts in India timezone
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: INDIA_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  // en-CA locale gives YYYY-MM-DD format
-  return formatter.format(now);
+// ============================================
+// EVENT CREATION - ALL TIMES IN IST
+// ============================================
+
+function getColorForEventType(eventType: EventType): string {
+  switch (eventType) {
+    case EVENT_TYPES.MORNING:
+      return "5"; // Yellow - sunrise
+    case EVENT_TYPES.NIGHT:
+      return "9"; // Blue - night
+    case EVENT_TYPES.WEEKLY:
+      return "3"; // Purple - special
+    case EVENT_TYPES.TRACKER:
+      return "10"; // Green - productivity
+    case EVENT_TYPES.INTERRUPT:
+      return "6"; // Orange - attention grabbing
+    default:
+      return "1";
+  }
 }
 
-// Create or update a recurring event - ALWAYS uses India timezone
-export async function createOrUpdateEvent(
+interface EventConfig {
+  summary: string;
+  description: string;
+  startTime: string; // HH:MM format (IST)
+  durationMinutes: number;
+  recurrence: string[];
+  reminderMinutesBefore: number;
+}
+
+/**
+ * Create or update a recurring event in Google Calendar
+ * ALL TIMES ARE INTERPRETED AS INDIA STANDARD TIME
+ */
+async function createOrUpdateEvent(
   accessToken: string,
   calendarId: string,
   eventType: EventType,
   existingEventId: string | null,
-  eventConfig: {
-    summary: string;
-    description: string;
-    startTime: string; // HH:MM format in IST
-    duration: number; // minutes
-    recurrence: string[]; // RRULE strings
-    reminderMinutes: number;
-  },
-  baseUrl: string
+  config: EventConfig,
+  appUrl: string
 ): Promise<string> {
-  const { summary, description, startTime, duration, recurrence, reminderMinutes } =
-    eventConfig;
+  // Use tomorrow's date to ensure events start fresh
+  const startDate = getTomorrowInIST();
 
-  // Get today's date in India timezone (NOT UTC)
-  const dateStr = getTodayInIST();
+  const startDateTime = formatLocalDateTime(startDate, config.startTime);
+  const endTime = calculateEndTime(config.startTime, config.durationMinutes);
+  const endDateTime = formatLocalDateTime(startDate, endTime);
 
-  // Parse start time (already in IST)
-  const [hours, minutes] = startTime.split(":").map(Number);
+  // Build reminders - always include a popup at event time (0 minutes)
+  const reminders: { method: string; minutes: number }[] = [
+    { method: "popup", minutes: 0 }, // Notification exactly at event time
+  ];
 
-  // Format: YYYY-MM-DDTHH:MM:SS (NO Z suffix - timezone specified separately)
-  // This is the LOCAL time in India, NOT UTC
-  const startDateTime = `${dateStr}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
-
-  // Calculate end time
-  const totalMinutes = hours * 60 + minutes + duration;
-  const endHours = Math.floor(totalMinutes / 60) % 24;
-  const endMinutes = totalMinutes % 60;
-  const endDateTime = `${dateStr}T${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}:00`;
+  if (config.reminderMinutesBefore > 0) {
+    reminders.push({ method: "popup", minutes: config.reminderMinutesBefore });
+  }
 
   const eventBody = {
-    summary,
-    description: `${description}\n\nOpen app: ${baseUrl}`,
+    summary: config.summary,
+    description: `${config.description}\n\nOpen Reset Day: ${appUrl}`,
     start: {
       dateTime: startDateTime,
-      timeZone: INDIA_TIMEZONE, // HARDCODED: Asia/Kolkata
+      timeZone: INDIA_TIMEZONE, // CRITICAL: Always Asia/Kolkata
     },
     end: {
       dateTime: endDateTime,
-      timeZone: INDIA_TIMEZONE, // HARDCODED: Asia/Kolkata
+      timeZone: INDIA_TIMEZONE, // CRITICAL: Always Asia/Kolkata
     },
-    recurrence,
+    recurrence: config.recurrence,
     reminders: {
       useDefault: false,
-      overrides: [
-        { method: "popup", minutes: reminderMinutes },
-        ...(reminderMinutes > 0 ? [{ method: "popup", minutes: 0 }] : []),
-      ],
+      overrides: reminders,
     },
     colorId: getColorForEventType(eventType),
   };
 
   let response: Response;
+  const calendarUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
 
   if (existingEventId) {
     // Update existing event
-    response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${existingEventId}`,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(eventBody),
-      }
-    );
-  } else {
-    // Create new event
-    response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
-      {
+    response = await fetch(`${calendarUrl}/${existingEventId}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(eventBody),
+    });
+
+    // If update fails (event might be deleted), create new
+    if (!response.ok) {
+      response = await fetch(calendarUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(eventBody),
-      }
-    );
+      });
+    }
+  } else {
+    // Create new event
+    response = await fetch(calendarUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(eventBody),
+    });
   }
 
   if (!response.ok) {
     const error = await response.text();
+    console.error(`Failed to create/update event ${config.summary}:`, error);
     throw new Error(`Failed to create/update event: ${error}`);
   }
 
@@ -347,41 +430,36 @@ export async function createOrUpdateEvent(
   return data.id;
 }
 
-// Get color ID for event type
-function getColorForEventType(eventType: EventType): string {
-  switch (eventType) {
-    case EVENT_TYPES.MORNING:
-      return "5"; // Yellow
-    case EVENT_TYPES.NIGHT:
-      return "9"; // Blue
-    case EVENT_TYPES.WEEKLY:
-      return "3"; // Purple
-    case EVENT_TYPES.TRACKER:
-      return "10"; // Green
-    case EVENT_TYPES.INTERRUPT:
-      return "6"; // Orange - stands out for attention
-    default:
-      return "1";
+/**
+ * Delete an event from Google Calendar (silently fails if not found)
+ */
+async function deleteEventSilently(
+  accessToken: string,
+  calendarId: string,
+  eventId: string
+): Promise<void> {
+  try {
+    await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+  } catch {
+    // Silently ignore - event might already be deleted
   }
 }
+
+// ============================================
+// SYNC ALL EVENTS - MAIN FUNCTION
+// ============================================
 
 /**
- * Generate all 30-min tracker time slots from 8:00 AM to 10:00 PM IST
- * Returns array of "HH:MM" strings
+ * Sync all Reset Day events to Google Calendar
+ * Creates/updates: Morning, Night, Weekly, Interrupts, Trackers
+ * ALL EVENTS USE INDIA STANDARD TIME (Asia/Kolkata)
  */
-function getTrackerTimeSlots(): string[] {
-  const slots: string[] = [];
-  // From 8:00 (8*60=480) to 22:00 (22*60=1320), every 30 minutes
-  // That's 8:00, 8:30, 9:00, ... 21:30, 22:00 = 29 slots
-  for (let totalMinutes = 8 * 60; totalMinutes <= 22 * 60; totalMinutes += 30) {
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    slots.push(`${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`);
-  }
-  return slots;
-}
-
-// Sync all Reset Day events to Google Calendar - ALWAYS uses India timezone
 export async function syncAllEvents(
   userId: string,
   accessToken: string,
@@ -390,20 +468,23 @@ export async function syncAllEvents(
 ): Promise<void> {
   const supabase = await createClient();
 
-  // Get existing event mappings
+  // Get existing event mappings from database
   const { data: existingMappings } = await supabase
     .from("calendar_event_map")
     .select("event_type, google_event_id")
     .eq("user_id", userId);
 
   const mappings = (existingMappings ?? []) as CalendarEventMapRow[];
-  const getExistingEventId = (type: string) =>
+  const getExistingEventId = (type: string): string | null =>
     mappings.find((m) => m.event_type === type)?.google_event_id ?? null;
 
-  // Track all event mappings to save
-  const eventMappingsToSave: { event_type: string; google_event_id: string }[] = [];
+  // Track new mappings to save
+  const newMappings: { event_type: string; google_event_id: string }[] = [];
 
-  // 1. Morning Ritual - Daily at 8:00 AM IST
+  // ----------------------------------------
+  // 1. MORNING RITUAL - Daily at 8:00 AM IST
+  // ----------------------------------------
+  console.log("Syncing Morning Ritual event...");
   const morningEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -411,21 +492,20 @@ export async function syncAllEvents(
     getExistingEventId(EVENT_TYPES.MORNING),
     {
       summary: "🌅 Morning Ritual",
-      description:
-        "Review your identity, anti-vision, and vision. Pick today's quests.",
-      startTime: "08:00", // 8:00 AM IST
-      duration: 15,
+      description: "Review your identity, anti-vision, and vision. Pick today's quests.\n\nTime: 8:00 AM IST",
+      startTime: "08:00",
+      durationMinutes: 15,
       recurrence: ["RRULE:FREQ=DAILY"],
-      reminderMinutes: 5,
+      reminderMinutesBefore: 5,
     },
     `${baseUrl}/morning`
   );
-  eventMappingsToSave.push({
-    event_type: EVENT_TYPES.MORNING,
-    google_event_id: morningEventId,
-  });
+  newMappings.push({ event_type: EVENT_TYPES.MORNING, google_event_id: morningEventId });
 
-  // 2. Night Reflection - Daily at 9:00 PM IST
+  // ----------------------------------------
+  // 2. NIGHT REFLECTION - Daily at 9:00 PM IST
+  // ----------------------------------------
+  console.log("Syncing Night Reflection event...");
   const nightEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -433,20 +513,20 @@ export async function syncAllEvents(
     getExistingEventId(EVENT_TYPES.NIGHT),
     {
       summary: "🌙 Night Reflection",
-      description: "Reflect on your day, journal, and plan tomorrow's quests.",
-      startTime: "21:00", // 9:00 PM IST
-      duration: 20,
+      description: "Reflect on your day, journal (100+ words), and plan tomorrow's quests.\n\nTime: 9:00 PM IST",
+      startTime: "21:00",
+      durationMinutes: 20,
       recurrence: ["RRULE:FREQ=DAILY"],
-      reminderMinutes: 5,
+      reminderMinutesBefore: 5,
     },
     `${baseUrl}/night`
   );
-  eventMappingsToSave.push({
-    event_type: EVENT_TYPES.NIGHT,
-    google_event_id: nightEventId,
-  });
+  newMappings.push({ event_type: EVENT_TYPES.NIGHT, google_event_id: nightEventId });
 
-  // 3. Weekly Reset - Sundays at 6:00 PM IST
+  // ----------------------------------------
+  // 3. WEEKLY RESET - Sundays at 6:00 PM IST
+  // ----------------------------------------
+  console.log("Syncing Weekly Reset event...");
   const weeklyEventId = await createOrUpdateEvent(
     accessToken,
     calendarId,
@@ -454,118 +534,95 @@ export async function syncAllEvents(
     getExistingEventId(EVENT_TYPES.WEEKLY),
     {
       summary: "📅 Weekly Reset",
-      description:
-        "Deep reflection: review your anti-vision, vision, and set weekly goals.",
-      startTime: "18:00", // 6:00 PM IST
-      duration: 30,
+      description: "Deep reflection: review your anti-vision, vision, and set weekly goals.\n\nTime: 6:00 PM IST (Sundays)",
+      startTime: "18:00",
+      durationMinutes: 30,
       recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=SU"],
-      reminderMinutes: 15,
+      reminderMinutesBefore: 15,
     },
     `${baseUrl}/weekly`
   );
-  eventMappingsToSave.push({
-    event_type: EVENT_TYPES.WEEKLY,
-    google_event_id: weeklyEventId,
-  });
+  newMappings.push({ event_type: EVENT_TYPES.WEEKLY, google_event_id: weeklyEventId });
 
-  // 4. 30-min Tracker Reminders - Every 30 min from 8:00 AM to 10:00 PM IST
-  // Google Calendar doesn't support BYHOUR/BYMINUTE for multiple daily events
-  // So we create separate daily recurring events for each 30-min slot
-  const trackerSlots = getTrackerTimeSlots();
-
-  // First, delete any old tracker events that might exist with wrong format
-  const oldTrackerMapping = mappings.find((m) => m.event_type === EVENT_TYPES.TRACKER);
-  if (oldTrackerMapping) {
-    try {
-      await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${oldTrackerMapping.google_event_id}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
-    } catch {
-      // Ignore if already deleted
-    }
-  }
-
-  // Delete old individual tracker slot events (clean up any stale mappings)
-  for (let i = 0; i < 30; i++) {
-    const oldSlotMapping = mappings.find(
-      (m) => m.event_type === `${EVENT_TYPES.TRACKER}_${i}`
-    );
-    if (oldSlotMapping) {
-      try {
-        await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${oldSlotMapping.google_event_id}`,
-          {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }
-        );
-      } catch {
-        // Ignore if already deleted
-      }
-    }
-  }
-
-  // Create new tracker events for each 30-min slot (all times in IST)
-  for (let i = 0; i < trackerSlots.length; i++) {
-    const slot = trackerSlots[i];
-    const slotEventType = `${EVENT_TYPES.TRACKER}_${i}`;
-    const existingSlotEventId = getExistingEventId(slotEventType);
-
-    const trackerEventId = await createOrUpdateEvent(
-      accessToken,
-      calendarId,
-      EVENT_TYPES.TRACKER,
-      existingSlotEventId,
-      {
-        summary: "⏱️ Log Time Block",
-        description: `Track what you worked on. Open the 30-min tracker to log your progress.`,
-        startTime: slot, // Time in IST (e.g., "08:00", "08:30", etc.)
-        duration: 5,
-        recurrence: ["RRULE:FREQ=DAILY"],
-        reminderMinutes: 0,
-      },
-      `${baseUrl}/tracker`
-    );
-
-    eventMappingsToSave.push({
-      event_type: slotEventType,
-      google_event_id: trackerEventId,
-    });
-  }
-
-  // 5. Interrupt Reminders - 6 times daily at 9 AM, 11 AM, 1 PM, 3 PM, 5 PM, 7 PM IST
+  // ----------------------------------------
+  // 4. INTERRUPT REMINDERS - 6 times daily
+  // 9 AM, 11 AM, 1 PM, 3 PM, 5 PM, 7 PM IST
+  // ----------------------------------------
+  console.log("Syncing Interrupt events...");
   for (const interrupt of INTERRUPT_SCHEDULE) {
-    const interruptEventType = `${EVENT_TYPES.INTERRUPT}_${interrupt.number}`;
-    const existingInterruptEventId = getExistingEventId(interruptEventType);
+    const eventType = `${EVENT_TYPES.INTERRUPT}_${interrupt.number}`;
 
     const interruptEventId = await createOrUpdateEvent(
       accessToken,
       calendarId,
       EVENT_TYPES.INTERRUPT,
-      existingInterruptEventId,
+      getExistingEventId(eventType),
       {
         summary: `⚡ Interrupt #${interrupt.number}`,
-        description: `Time for your interrupt reflection! Take a moment to check in with yourself and log your progress. (${interrupt.label} IST)`,
-        startTime: interrupt.time, // Time in IST (e.g., "09:00", "11:00", etc.)
-        duration: 5,
+        description: `Time for your interrupt reflection! Check in with yourself.\n\nTime: ${interrupt.label}`,
+        startTime: interrupt.time,
+        durationMinutes: 5,
         recurrence: ["RRULE:FREQ=DAILY"],
-        reminderMinutes: 0, // Immediate notification
+        reminderMinutesBefore: 0, // Immediate notification only
       },
       `${baseUrl}/interrupt`
     );
 
-    eventMappingsToSave.push({
-      event_type: interruptEventType,
-      google_event_id: interruptEventId,
-    });
+    newMappings.push({ event_type: eventType, google_event_id: interruptEventId });
   }
 
-  // Save all event mappings
-  for (const mapping of eventMappingsToSave) {
+  // ----------------------------------------
+  // 5. 30-MIN TRACKER - Every 30 min, 8 AM to 10 PM IST
+  // ----------------------------------------
+  console.log("Syncing 30-min Tracker events...");
+
+  // First, clean up old tracker events
+  const oldTrackerMapping = mappings.find((m) => m.event_type === EVENT_TYPES.TRACKER);
+  if (oldTrackerMapping) {
+    await deleteEventSilently(accessToken, calendarId, oldTrackerMapping.google_event_id);
+  }
+
+  // Clean up old slot-based tracker events
+  for (let i = 0; i < 30; i++) {
+    const oldSlotMapping = mappings.find((m) => m.event_type === `${EVENT_TYPES.TRACKER}_${i}`);
+    if (oldSlotMapping) {
+      await deleteEventSilently(accessToken, calendarId, oldSlotMapping.google_event_id);
+    }
+  }
+
+  // Create tracker events for each 30-min slot from 8:00 AM to 10:00 PM IST
+  // That's 29 slots: 8:00, 8:30, 9:00, ..., 21:30, 22:00
+  for (let slotIndex = 0; slotIndex <= 28; slotIndex++) {
+    const totalMinutes = 8 * 60 + slotIndex * 30; // Start at 8:00 AM
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const timeStr = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    const eventType = `${EVENT_TYPES.TRACKER}_${slotIndex}`;
+
+    const trackerEventId = await createOrUpdateEvent(
+      accessToken,
+      calendarId,
+      EVENT_TYPES.TRACKER,
+      getExistingEventId(eventType),
+      {
+        summary: "⏱️ Log Time Block",
+        description: `Track what you worked on in the last 30 minutes.\n\nTime: ${timeStr} IST`,
+        startTime: timeStr,
+        durationMinutes: 5,
+        recurrence: ["RRULE:FREQ=DAILY"],
+        reminderMinutesBefore: 0, // Immediate notification only
+      },
+      `${baseUrl}/tracker`
+    );
+
+    newMappings.push({ event_type: eventType, google_event_id: trackerEventId });
+  }
+
+  // ----------------------------------------
+  // SAVE ALL MAPPINGS TO DATABASE
+  // ----------------------------------------
+  console.log("Saving event mappings to database...");
+  for (const mapping of newMappings) {
     await (supabase as any)
       .from("calendar_event_map")
       .upsert(
@@ -586,9 +643,14 @@ export async function syncAllEvents(
       updated_at: new Date().toISOString(),
     })
     .eq("user_id", userId);
+
+  console.log("Calendar sync complete!");
 }
 
-// Delete all Reset Day events from Google Calendar
+// ============================================
+// DELETE ALL EVENTS
+// ============================================
+
 export async function deleteAllEvents(
   accessToken: string,
   calendarId: string,
@@ -604,28 +666,20 @@ export async function deleteAllEvents(
 
   // Delete each event from Google Calendar
   for (const mapping of (mappings ?? []) as { google_event_id: string }[]) {
-    try {
-      await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${mapping.google_event_id}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
-    } catch (error) {
-      console.error("Failed to delete event:", error);
-    }
+    await deleteEventSilently(accessToken, calendarId, mapping.google_event_id);
   }
 
   // Delete mappings from database
   await (supabase as any).from("calendar_event_map").delete().eq("user_id", userId);
 }
 
-// Revoke Google access and clean up
+// ============================================
+// REVOKE ACCESS
+// ============================================
+
 export async function revokeGoogleAccess(userId: string): Promise<void> {
   const supabase = await createClient();
 
-  // Get token data
   const { data: tokenData } = await supabase
     .from("google_calendar_tokens")
     .select("access_token")
