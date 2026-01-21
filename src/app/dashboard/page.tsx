@@ -3,12 +3,13 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { SignOutButton } from "@/components/sign-out-button";
 import { DailyTasks } from "@/components/daily-tasks";
+import { InterruptCard } from "@/components/interrupt-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import type { Profile, MorningEntry, InterruptEntry, NightEntry, DailyQuest, Lever, Achievement, UserAchievement } from "@/lib/supabase/types";
-import { getToday, isSunday, getSundayOfWeek, getStreakMultiplier, INTERRUPT_TIMES, getCurrentInterruptNumber } from "@/lib/utils";
+import { getTodayIST, isSunday, getSundayOfWeek, getStreakMultiplier } from "@/lib/utils";
 import { getUserAchievements, getAllAchievements } from "@/lib/achievements";
 
 export default async function DashboardPage() {
@@ -19,7 +20,7 @@ export default async function DashboardPage() {
     redirect("/auth/signin");
   }
 
-  const today = getToday();
+  const today = getTodayIST();
   const weekStart = getSundayOfWeek();
 
   // Load profile
@@ -94,19 +95,9 @@ export default async function DashboardPage() {
   const level = Math.floor(totalXp / 100);
   const xpInLevel = totalXp % 100;
   const multiplier = getStreakMultiplier(currentStreak);
-  const currentInterruptNum = getCurrentInterruptNumber();
 
-  // Determine available interrupts
+  // Get completed interrupt numbers for the client component
   const completedInterruptNumbers = interrupts.map((i) => i.interrupt_number);
-  let nextInterrupt: number | null = null;
-  if (currentInterruptNum) {
-    for (let i = 1; i <= currentInterruptNum; i++) {
-      if (!completedInterruptNumbers.includes(i)) {
-        nextInterrupt = i;
-        break;
-      }
-    }
-  }
 
   return (
     <div className="min-h-screen p-4">
@@ -211,57 +202,11 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Interrupts */}
-          <Card className={completedInterrupts === 6 ? "border-primary/50" : ""}>
-            <CardHeader>
-              <div className="flex justify-between items-start">
-                <div>
-                  <CardTitle className="text-lg">Interrupts</CardTitle>
-                  <CardDescription>{completedInterrupts}/6 completed today</CardDescription>
-                </div>
-                {completedInterrupts === 6 ? (
-                  <Badge variant="secondary">All Done</Badge>
-                ) : nextInterrupt ? (
-                  <Badge>Pending</Badge>
-                ) : (
-                  <Badge variant="outline">Waiting</Badge>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-2 mb-3">
-                {INTERRUPT_TIMES.map((t) => (
-                  <div
-                    key={t.number}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-xs ${
-                      completedInterruptNumbers.includes(t.number)
-                        ? "bg-primary text-primary-foreground"
-                        : t.number === nextInterrupt
-                        ? "bg-accent border-2 border-primary"
-                        : currentInterruptNum && t.number <= currentInterruptNum
-                        ? "bg-destructive/20 text-destructive"
-                        : "bg-muted"
-                    }`}
-                  >
-                    {t.number}
-                  </div>
-                ))}
-              </div>
-              {nextInterrupt ? (
-                <Button asChild className="w-full">
-                  <Link href="/interrupt">Complete Interrupt #{nextInterrupt}</Link>
-                </Button>
-              ) : completedInterrupts === 6 ? (
-                <p className="text-sm text-muted-foreground text-center">
-                  All interrupts complete!
-                </p>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center">
-                  Next interrupt at {INTERRUPT_TIMES[completedInterrupts]?.time || "9:00 AM"}
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          {/* Interrupts - Client component with real-time updates */}
+          <InterruptCard
+            userId={user.id}
+            initialCompletedNumbers={completedInterruptNumbers}
+          />
 
           {/* Night */}
           <Card className={nightEntry ? "border-primary/50" : ""}>

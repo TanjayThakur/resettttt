@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { getToday, XP_VALUES, getStreakMultiplier, INTERRUPT_TIMES, getCurrentInterruptNumber } from "@/lib/utils";
+import { getTodayIST, XP_VALUES, getStreakMultiplier, INTERRUPT_TIMES, getCurrentInterruptNumber } from "@/lib/utils";
 import type { Profile, Prompt, InterruptEntry, Database } from "@/lib/supabase/types";
 
 export default function InterruptPage() {
@@ -19,12 +19,10 @@ export default function InterruptPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [currentInterruptNum, setCurrentInterruptNum] = useState<number | null>(null);
+  const lastCheckDateRef = useRef<string>(getTodayIST());
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  // Load data and check for interrupt availability
+  const loadData = useCallback(async () => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -33,7 +31,14 @@ export default function InterruptPage() {
       return;
     }
 
-    const today = getToday();
+    const today = getTodayIST();
+
+    // Check if day changed (midnight rollover)
+    if (lastCheckDateRef.current !== today) {
+      lastCheckDateRef.current = today;
+      setCompletedInterrupts([]);
+    }
+
     const currentNum = getCurrentInterruptNumber();
     setCurrentInterruptNum(currentNum);
 
@@ -46,7 +51,7 @@ export default function InterruptPage() {
 
     setProfile(profileData);
 
-    // Load today's completed interrupts
+    // Load today's completed interrupts using IST date
     const { data: interruptsData } = await supabase
       .from("interrupt_entries")
       .select("*")
@@ -56,19 +61,45 @@ export default function InterruptPage() {
 
     setCompletedInterrupts((interruptsData as InterruptEntry[]) ?? []);
 
-    // Load a random prompt
-    const { data: promptsData } = await supabase
-      .from("prompts")
-      .select("*")
-      .eq("is_active", true);
+    // Load a random prompt (only on initial load)
+    if (!prompt) {
+      const { data: promptsData } = await supabase
+        .from("prompts")
+        .select("*")
+        .eq("is_active", true);
 
-    if (promptsData && promptsData.length > 0) {
-      const randomPrompt = promptsData[Math.floor(Math.random() * promptsData.length)] as Prompt;
-      setPrompt(randomPrompt);
+      if (promptsData && promptsData.length > 0) {
+        const randomPrompt = promptsData[Math.floor(Math.random() * promptsData.length)] as Prompt;
+        setPrompt(randomPrompt);
+      }
     }
 
     setIsLoading(false);
-  };
+  }, [router, prompt]);
+
+  // Initial load and set up real-time checking
+  useEffect(() => {
+    loadData();
+
+    // Check every 30 seconds for time changes
+    const intervalId = setInterval(() => {
+      const newCurrentNum = getCurrentInterruptNumber();
+      setCurrentInterruptNum(newCurrentNum);
+    }, 30000);
+
+    // Also check when tab becomes visible
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadData();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadData]);
 
   const getNextInterruptNumber = (): number | null => {
     if (!currentInterruptNum) return null;
@@ -105,7 +136,7 @@ export default function InterruptPage() {
       return;
     }
 
-    const today = getToday();
+    const today = getTodayIST();
     const multiplier = getStreakMultiplier(profile?.current_streak ?? 0);
     const xpEarned = Math.round(XP_VALUES.INTERRUPT * multiplier);
 
