@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTheme } from "next-themes";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import Link from "next/link";
+import { Sun, Moon } from "lucide-react";
 import {
   registerServiceWorker,
   requestNotificationPermission,
@@ -47,6 +49,8 @@ const TIMEZONES = [
 function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -68,6 +72,10 @@ function SettingsContent() {
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [isSyncingGoogle, setIsSyncingGoogle] = useState(false);
   const [isDisconnectingGoogle, setIsDisconnectingGoogle] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -511,6 +519,40 @@ function SettingsContent() {
                   {isConnectingGoogle ? "Connecting..." : "Connect Google Calendar"}
                 </Button>
               </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Appearance */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Appearance</CardTitle>
+            <CardDescription>
+              Choose between light and dark mode
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {mounted && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {theme === "dark" ? (
+                    <Moon className="h-5 w-5" />
+                  ) : (
+                    <Sun className="h-5 w-5" />
+                  )}
+                  <div>
+                    <Label htmlFor="theme-switch">Dark Mode</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  id="theme-switch"
+                  checked={theme === "dark"}
+                  onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
+                />
+              </div>
             )}
           </CardContent>
         </Card>
